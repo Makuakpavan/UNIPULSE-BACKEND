@@ -1,0 +1,246 @@
+import { Request, Response } from 'express';
+import User from '../models/User';
+import Institution from '../models/Institution';
+import { formatResponse, buildPagination } from '../utils/helpers';
+import { cacheGet, cacheSet, cacheDelete } from '../config/redis';
+import { AppError } from '../middleware/errorHandler';
+import { uploadToCloudinary } from '../config/cloudinary';
+import fs from 'fs';
+import logger from '../utils/logger';
+import Notification from '../models/Notification';
+
+export const getUserProfile = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const currentUser = req.user;
+
+    const cacheKey = `user:profile:${userId}`;
+    const cached = await cacheGet(cacheKey);
+    if (cached) {
+      res.status(200).json(formatResponse(true, 'User profile retrieved', JSON.parse(cached)));
+      return;
+    }
+
+    const user = await User.findById(userId)
+      .populate('institution', 'name slug logo')
+      .select('-password -refreshTokens -twoFactorSecret');
+
+    if (!user || !user.isActive) {
+      res.status(404).json(formatResponse(false, 'User not found'));
+      return;
+    }
+
+    // Check visibility permissions
+    if (user.profileVisibility === 'private' && user._id.toString() !== currentUser._id.toString()) {
+      res.status(403).json(formatResponse(false, 'This profile is private'));
+      return;
+    }
+
+    if (
+      user.profileVisibility === 'institution_only' &&
+      user.institution?.toString() !== currentUser.institution?.toString()
+    ) {
+      res.status(403).json(formatResponse(false, 'This profile is only visible to institution members'));
+      return;
+    }
+
+    const profile = {
+      id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      username: user.username,
+      avatar: user.avatar,
+      bio: user.bio,
+      department: user.department,
+      level: user.level,
+      institution: user.institution,
+      role: user.role,
+      isVerifiedStudent: user.isVerifiedStudent,
+      followersCount: user.followers?.length || 0,
+      followingCount: user.following?.length || 0,
+      createdAt: user.createdAt,
+    };
+
+    await cacheSet(cacheKey, JSON.stringify(profile), 300);
+    res.status(200).json(formatResponse(true, 'User profile retrieved', profile));
+  } catch (error: any) {
+    res.status(500).json(formatResponse(false, error.message));
+  }
+};
+
+export const updateProfile = async (req: any, res: Response): Promise<void> => {
+  try {
+    const allowedUpdates = ['firstName', 'lastName', 'bio', 'phone', 'department', 'level', 'profileVisibility'];
+    const updates: any = {};
+
+    allowedUpdates.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
+
+    // Handle avatar upload
+    if (req.file) {
+      const uploadResult = await uploadToCloudinary(req.file.path, 'unipulse/avatars');
+      updates.avatar = uploadResult.url;
+      fs.unlinkSync(req.file.path);
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      updates,
+      { new: true, runValidators: true }
+    ).select('-password -refreshTokens -twoFactorSecret');
+
+    await cacheDelete(`user:profile:${req.user._id}`);
+
+    res.status(200).json(formatResponse(true, 'Profile updated successfully', { user }));
+  } catch (error: any) {
+    res.status(400).json(formatResponse(false, error.message));
+  }
+};
+
+export const followUser = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user._id.toString();
+
+    if (userId === currentUserId) {
+      res.status(400).json(formatResponse(false, 'Cannot follow yourself'));
+      return;
+    }
+
+    const targetUser = await User.findById(userId);
+    if (!targetUser || !targetUser.isActive) {
+      res.status(404).json(formatResponse(false, 'User not found'));
+      return;
+    }
+
+    const isFollowing = req.user.following?.includes(userId);
+
+    if (isFollowing) {
+      // Unfollow
+      await User.findByIdAndUpdate(currentUserId, { $pull: { following: userId } });
+      await User.findByIdAndUpdate(userId, { $pull: { followers: currentUserId } });
+      res.status(200).json(formatResponse(true, 'Unfollowed successfully'));
+    } else {
+      // Follow
+      await User.findByIdAndUpdate(currentUserId, { $addToSet: { following: userId } });
+      await User.findByIdAndUpdate(userId, { $addToSet: { followers: currentUserId } });
+
+      // Create notification
+
+        await Notification.create({
+          recipient: userId,
+          type: 'follow',
+          title: 'New Follower',
+          message: `${req.user.firstName} ${req.user.lastName} started following you`,
+          data: { followerId: currentUserId },
+        });
+
+      res.status(200).json(formatResponse(true, 'Followed successfully'));
+    }
+  } catch (error: any) {
+    res.status(400).json(formatResponse(false, error.message));
+  }
+};
+
+export const getFollowers = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const { skip } = buildPagination(page, limit);
+
+    const user = await User.findById(userId)
+      .populate({
+        path: 'followers',
+        select: 'firstName lastName username avatar',
+        options: { skip, limit },
+      })
+      .select('followers');
+
+    res.status(200).json(
+      formatResponse(true, 'Followers retrieved', {
+        followers: user?.followers || [],
+        meta: { page, limit },
+      })
+    );
+  } catch (error: any) {
+    res.status(500).json(formatResponse(false, error.message));
+  }
+};
+
+export const getFollowing = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const { skip } = buildPagination(page, limit);
+
+    const user = await User.findById(userId)
+      .populate({
+        path: 'following',
+        select: 'firstName lastName username avatar',
+        options: { skip, limit },
+      })
+      .select('following');
+
+    res.status(200).json(
+      formatResponse(true, 'Following retrieved', {
+        following: user?.following || [],
+        meta: { page, limit },
+      })
+    );
+  } catch (error: any) {
+    res.status(500).json(formatResponse(false, error.message));
+  }
+};
+
+export const getInstitutions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const search = req.query.search as string;
+    const { skip } = buildPagination(page, limit);
+
+    const query: any = { isActive: true };
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { location: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [institutions, total] = await Promise.all([
+      Institution.find(query).skip(skip).limit(limit).sort({ name: 1 }),
+      Institution.countDocuments(query),
+    ]);
+
+    res.status(200).json(
+      formatResponse(true, 'Institutions retrieved', institutions, {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      })
+    );
+  } catch (error: any) {
+    res.status(500).json(formatResponse(false, error.message));
+  }
+};
+
+export const requestVerification = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { documents } = req.body;
+
+    await User.findByIdAndUpdate(req.user._id, {
+      verificationDocuments: documents,
+      isVerifiedStudent: false,
+    });
+
+    res.status(200).json(formatResponse(true, 'Verification request submitted'));
+  } catch (error: any) {
+    res.status(400).json(formatResponse(false, error.message));
+  }
+};
