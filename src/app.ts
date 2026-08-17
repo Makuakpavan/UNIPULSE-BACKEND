@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
+import { RequestHandler } from 'express';
 import { env } from './config/env';
 import { globalRateLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
@@ -29,8 +30,8 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(compression());
-app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
+app.use(compression() as unknown as RequestHandler);
+app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev') as unknown as RequestHandler);
 app.use(globalRateLimiter);
 
 app.get('/health', (req, res) => {
