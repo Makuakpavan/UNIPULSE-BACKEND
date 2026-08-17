@@ -1,6 +1,5 @@
 import multer from 'multer';
 import path from 'path';
-import { Request } from 'express';
 import { AppError } from './errorHandler';
 
 const storage = multer.diskStorage({
@@ -13,7 +12,7 @@ const storage = multer.diskStorage({
   },
 });
 
-const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+const fileFilter: multer.Options['fileFilter'] = (req, file, cb) => {
   const allowedMimes = [
     'image/jpeg',
     'image/png',
@@ -26,7 +25,12 @@ const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilt
   if (allowedMimes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new AppError('Only images (JPEG, PNG, GIF, WebP) and videos (MP4, WebM) are allowed', 400) as any);
+    cb(
+      new AppError(
+        'Only images (JPEG, PNG, GIF, WebP) and videos (MP4, WebM) are allowed',
+        400
+      ) as any
+    );
   }
 };
 
