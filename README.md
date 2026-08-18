@@ -350,3 +350,30 @@ railway up
 ## License
 
 MIT (c) UniPulse Team
+
+## Staging & Hosting (quick guide)
+
+To host a staging backend using containers, follow these steps:
+
+1. Create a `.env.staging` file from `.env.staging.example` and fill in staging credentials (MongoDB URI, Redis URL, Cloudinary, SMTP, JWT secrets). Do NOT commit this file.
+
+2. Build and run with Docker Compose locally for verification:
+
+```bash
+docker compose -f docker-compose.staging.yml build
+docker compose -f docker-compose.staging.yml up -d
+```
+
+3. Verify health endpoint (default port `5001` in `docker-compose.staging.yml`):
+
+```bash
+curl http://localhost:5001/health
+```
+
+4. To publish a staging image automatically, push your changes to the `staging` branch. The included GitHub Actions workflow (`.github/workflows/ci-cd-staging.yml`) builds and pushes the image to `ghcr.io`.
+
+5. Deployment options:
+- Pull the published image on your staging host and run it (Docker/Compose/Kubernetes).
+- Or configure your PaaS (Render, Railway, Fly, DigitalOcean App Platform) to build directly from the repo using the provided `Dockerfile`.
+
+If you want, I can prepare provider-specific deployment manifests (Render/Heroku/Fly/Railway/AWS ECS) next—tell me which host you prefer.
