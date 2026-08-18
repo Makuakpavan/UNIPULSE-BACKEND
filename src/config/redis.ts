@@ -20,7 +20,7 @@ redis.on('error', (err) => {
 
 export const cacheGet = async (key: string): Promise<string | null> => {
   try {
-    return await redis.get(key);
+    return await redis.get(`${env.keyPrefix}${key}`);
   } catch {
     return null;
   }
@@ -28,7 +28,7 @@ export const cacheGet = async (key: string): Promise<string | null> => {
 
 export const cacheSet = async (key: string, value: string, ttlSeconds = 3600): Promise<void> => {
   try {
-    await redis.setex(key, ttlSeconds, value);
+    await redis.setex(`${env.keyPrefix}${key}`, ttlSeconds, value);
   } catch {
     // Fail silently - cache is not critical
   }
@@ -36,7 +36,7 @@ export const cacheSet = async (key: string, value: string, ttlSeconds = 3600): P
 
 export const cacheDelete = async (key: string): Promise<void> => {
   try {
-    await redis.del(key);
+    await redis.del(`${env.keyPrefix}${key}`);
   } catch {
     // Fail silently
   }
@@ -44,7 +44,7 @@ export const cacheDelete = async (key: string): Promise<void> => {
 
 export const cacheDeletePattern = async (pattern: string): Promise<void> => {
   try {
-    const keys = await redis.keys(pattern);
+    const keys = await redis.keys(`${env.keyPrefix}${pattern}`);
     if (keys.length > 0) {
       await redis.del(...keys);
     }

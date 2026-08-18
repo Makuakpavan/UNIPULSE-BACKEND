@@ -14,8 +14,12 @@ export const uploadToCloudinary = async (
   folder: string = 'unipulse',
   options: any = {}
 ): Promise<{ url: string; publicId: string }> => {
+  const targetFolder = env.cloudinaryFolderPrefix
+    ? `${env.cloudinaryFolderPrefix}/${folder}`
+    : folder;
+
   const result = await cloudinary.uploader.upload(filePath, {
-    folder,
+    folder: targetFolder,
     resource_type: 'auto',
     ...options,
   });

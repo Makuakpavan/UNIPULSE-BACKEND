@@ -34,8 +34,27 @@ app.use(compression() as unknown as RequestHandler);
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev') as unknown as RequestHandler);
 app.use(globalRateLimiter);
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+import mongoose from 'mongoose';
+import { redis } from './config/redis';
+
+app.get('/health', async (req, res) => {
+  const timestamp = new Date().toISOString();
+  const dbState = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  let redisState = 'unknown';
+  try {
+    const pong = await redis.ping();
+    redisState = pong === 'PONG' ? 'connected' : 'disconnected';
+  } catch (err) {
+    redisState = 'disconnected';
+  }
+
+  res.status(200).json({
+    status: 'ok',
+    timestamp,
+    environment: env.nodeEnv,
+    database: dbState,
+    redis: redisState,
+  });
 });
 
 app.use('/api/auth', authRoutes);

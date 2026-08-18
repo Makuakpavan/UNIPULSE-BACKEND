@@ -1,8 +1,16 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
+
+// Load environment-specific .env file first, then fallback to base .env
+const nodeEnv = process.env.NODE_ENV || 'development';
+const envPath = `.env.${nodeEnv}`;
+if (fs.existsSync(envPath)) {
+  dotenv.config({ path: envPath });
+}
 dotenv.config();
 
 export const env = {
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
   port: parseInt(process.env.PORT || '5000', 10),
   apiUrl: process.env.API_URL || 'http://localhost:5000',
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
@@ -19,6 +27,7 @@ export const env = {
   cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
   cloudinaryApiKey: process.env.CLOUDINARY_API_KEY || '',
   cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET || '',
+  cloudinaryFolderPrefix: process.env.CLOUDINARY_FOLDER_PREFIX || '',
 
   smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
   smtpPort: parseInt(process.env.SMTP_PORT || '587', 10),
@@ -34,4 +43,6 @@ export const env = {
 
   adminEmail: process.env.ADMIN_EMAIL || 'admin@unipulse.com',
   adminPassword: process.env.ADMIN_PASSWORD || 'AdminPass123!',
+  // Prefix for keys to isolate environments in Redis and other key-value stores
+  keyPrefix: process.env.KEY_PREFIX || `${nodeEnv}:`,
 };
