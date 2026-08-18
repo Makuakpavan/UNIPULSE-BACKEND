@@ -2,25 +2,71 @@ import nodemailer from 'nodemailer';
 import { env } from '../config/env';
 import logger from '../utils/logger';
 
-const transporter = nodemailer.createTransport({
-  host: env.smtpHost,
-  port: env.smtpPort,
-  secure: env.smtpPort === 465,
-  auth: {
-    user: env.smtpUser,
-    pass: env.smtpPass,
-  },
-});
+let cachedTransporter: nodemailer.Transporter | null = null;
+
+const getTransporter = async (): Promise<nodemailer.Transporter> => {
+  if (cachedTransporter) return cachedTransporter;
+
+  // If explicit SMTP configured, use it
+  if (env.smtpHost && env.smtpUser && env.smtpPass) {
+    cachedTransporter = nodemailer.createTransport({
+      host: env.smtpHost,
+      port: env.smtpPort,
+      secure: env.smtpPort === 465,
+      auth: {
+        user: env.smtpUser,
+        pass: env.smtpPass,
+      },
+    });
+    return cachedTransporter;
+  }
+
+  // For staging, prefer Ethereal test account if no SMTP provided
+  if (env.nodeEnv === 'staging') {
+    try {
+      const testAccount = await nodemailer.createTestAccount();
+      cachedTransporter = nodemailer.createTransport({
+        host: 'smtp.ethereal.email',
+        port: 587,
+        secure: false,
+        auth: {
+          user: testAccount.user,
+          pass: testAccount.pass,
+        },
+      });
+      logger.info('Using Ethereal test account for staging emails. Preview URLs will be logged.');
+      return cachedTransporter;
+    } catch (err) {
+      logger.error('Failed to create Ethereal account for staging emails', err);
+    }
+  }
+
+  // Fallback: create a direct transport (may fail in production)
+  cachedTransporter = nodemailer.createTransport({
+    host: env.smtpHost || 'localhost',
+    port: env.smtpPort || 25,
+    secure: false,
+  });
+  return cachedTransporter;
+};
 
 export class EmailService {
   static async sendEmail(to: string, subject: string, html: string): Promise<void> {
     try {
-      await transporter.sendMail({
-        from: `"${env.fromName}" <${env.fromEmail}>`,
+      const transporter = await getTransporter();
+      const info = await transporter.sendMail({
+        from: `${env.fromName} <${env.fromEmail}>`,
         to,
         subject,
         html,
       });
+
+      // If using Ethereal, log preview URL
+      // @ts-ignore - nodemailer types do not include getTestMessageUrl in typings
+      const previewUrl = nodemailer.getTestMessageUrl(info as any);
+      if (previewUrl) {
+        logger.info(`Ethereal preview URL: ${previewUrl}`);
+      }
     } catch (error) {
       logger.error('Email sending failed:', error);
       throw new Error('Failed to send email');
