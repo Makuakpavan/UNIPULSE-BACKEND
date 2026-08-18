@@ -1,0 +1,54 @@
+name: Staging Smoke Test
+
+on:
+  push:
+    branches: [ staging ]
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+    steps:
+      - name: Trigger deploy
+        id: trigger
+        run: |
+          if [ -z "$RENDER_API_KEY" ] || [ -z "$RENDER_SERVICE_ID" ]; then
+            echo "Missing RENDER_API_KEY or RENDER_SERVICE_ID"; exit 1;
+          fi
+          DEPLOY_RESPONSE=$(curl -s -X POST https://api.render.com/deploys \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"serviceId":"'"$RENDER_SERVICE_ID"'"}')
+          echo "$DEPLOY_RESPONSE" > deploy_response.json
+          echo "deploy_response<<EOF" >> $GITHUB_OUTPUT
+          cat deploy_response.json
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Get service URL
+        id: service
+        run: |
+          SERVICE_JSON=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" https://api.render.com/v1/services/$RENDER_SERVICE_ID)
+          echo "$SERVICE_JSON" > service.json
+          DOMAIN=$(echo "$SERVICE_JSON" | jq -r '.service.defaultDomain // .defaultDomain // .serviceName')
+          echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+
+      - name: Poll /health until ready
+        run: |
+          set -e
+          DOMAIN=${{ steps.service.outputs.domain }}
+          if [ -z "$DOMAIN" ]; then
+            echo "Could not determine Render domain"; exit 1;
+          fi
+          URL="https://$DOMAIN/health"
+          echo "Checking $URL"
+          for i in {1..20}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL" || true)
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Health OK"; exit 0;
+            fi
+            echo "Attempt $i: status $HTTP_CODE; sleeping 10s"
+            sleep 10
+          done
+          echo "Health check failed"; exit 1
