@@ -1,0 +1,39 @@
+# Render service manifest (template)
+# Fill values and use Render CLI or Dashboard to import.
+services:
+  - type: web_service
+    name: unipulse-backend-staging
+    env: docker
+    repo: <your-github-org-or-user>/unipulse-backend
+    branch: staging
+    dockerfile_path: ./Dockerfile
+    build_command: ""
+    start_command: ""
+    env_vars:
+      - key: NODE_ENV
+        value: staging
+        scope: SECRET
+      - key: MONGODB_URI
+        value: <staging-mongo-uri>
+        scope: SECRET
+      - key: REDIS_URL
+        value: <staging-redis-url>
+        scope: SECRET
+      - key: JWT_ACCESS_SECRET
+        value: <jwt-access-secret>
+        scope: SECRET
+      - key: JWT_REFRESH_SECRET
+        value: <jwt-refresh-secret>
+        scope: SECRET
+      - key: CLOUDINARY_CLOUD_NAME
+        value: <cloud-name>
+        scope: SECRET
+      - key: CLOUDINARY_API_KEY
+        value: <cloud-key>
+        scope: SECRET
+      - key: CLOUDINARY_API_SECRET
+        value: <cloud-secret>
+        scope: SECRET
+      - key: CLOUDINARY_FOLDER_PREFIX
+        value: staging
+        scope: PRIVATE
