@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import MarketplaceItem from '../models/MarketplaceItem';
 import { formatResponse, buildPagination } from '../utils/helpers';
+import { respondServerError } from '../middleware/errorHandler';
 import { cacheGet, cacheSet, cacheDeletePattern } from '../config/redis';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 import { MarketplaceStatus, UserRole } from '../types';
@@ -92,7 +93,7 @@ export const getItems = async (req: any, res: Response): Promise<void> => {
     await cacheSet(cacheKey, JSON.stringify(result), 300);
     res.status(200).json(formatResponse(true, 'Items retrieved', result));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -121,7 +122,7 @@ export const getItem = async (req: any, res: Response): Promise<void> => {
 
     res.status(200).json(formatResponse(true, 'Item retrieved', { item }));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -197,7 +198,7 @@ export const deleteItem = async (req: any, res: Response): Promise<void> => {
 
     res.status(200).json(formatResponse(true, 'Item deleted'));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 

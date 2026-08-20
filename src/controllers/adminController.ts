@@ -7,6 +7,7 @@ import AuditLog from '../models/AuditLog';
 import Institution from '../models/Institution';
 import { EmailService } from '../services/emailService';
 import { formatResponse, buildPagination } from '../utils/helpers';
+import { respondServerError } from '../middleware/errorHandler';
 import { UserRole } from '../types';
 
 export const getDashboardStats = async (req: any, res: Response): Promise<void> => {
@@ -33,7 +34,7 @@ export const getDashboardStats = async (req: any, res: Response): Promise<void> 
       })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -55,7 +56,7 @@ export const getPendingVerifications = async (req: any, res: Response): Promise<
       formatResponse(true, 'Pending verifications retrieved', { users, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -108,7 +109,7 @@ export const getAuditLogs = async (req: any, res: Response): Promise<void> => {
       formatResponse(true, 'Audit logs retrieved', { logs, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 

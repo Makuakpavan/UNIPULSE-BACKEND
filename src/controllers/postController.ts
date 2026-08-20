@@ -2,12 +2,28 @@ import { Request, Response } from 'express';
 import Post from '../models/Post';
 import User from '../models/User';
 import Notification from '../models/Notification';
-import { formatResponse, buildPagination, sanitizeContent } from '../utils/helpers';
+import { formatResponse, buildPagination, sanitizeContent, containsId } from '../utils/helpers';
+import { respondServerError } from '../middleware/errorHandler';
 import { cacheGet, cacheSet, cacheDelete, cacheDeletePattern } from '../config/redis';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 import { PostStatus, PostVisibility, UserRole } from '../types';
 import fs from 'fs';
 import logger from '../utils/logger';
+
+/** Posts are institution-scoped; only a super admin reads across tenants. */
+const canAccessPost = (post: any, user: any): boolean =>
+  user.role === UserRole.SUPER_ADMIN ||
+  post.institution?.toString() === user.institution?.toString();
+
+/**
+ * Moderators act only within their own institution. A super admin is global;
+ * an institution admin is not.
+ */
+const canModeratePost = (post: any, user: any): boolean => {
+  if (user.role === UserRole.SUPER_ADMIN) return true;
+  if (user.role !== UserRole.INSTITUTION_ADMIN) return false;
+  return post.institution?.toString() === user.institution?.toString();
+};
 
 export const createPost = async (req: any, res: Response): Promise<void> => {
   try {
@@ -102,7 +118,7 @@ export const getFeed = async (req: any, res: Response): Promise<void> => {
     await cacheSet(cacheKey, JSON.stringify(result), 120);
     res.status(200).json(formatResponse(true, 'Feed retrieved', result));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -119,11 +135,7 @@ export const getPost = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    // Check institution access
-    if (
-      post.institution?.toString() !== req.user.institution?.toString() &&
-      req.user.role !== UserRole.SUPER_ADMIN
-    ) {
+    if (!canAccessPost(post, req.user)) {
       res.status(403).json(formatResponse(false, 'You do not have access to this post'));
       return;
     }
@@ -132,10 +144,14 @@ export const getPost = async (req: any, res: Response): Promise<void> => {
     if (postObj.isAnonymous) {
       postObj.author = null;
     }
+    // Comment authors opt into anonymity independently of the post.
+    postObj.comments = (postObj.comments || []).map((comment: any) =>
+      comment.isAnonymous ? { ...comment, author: null } : comment
+    );
 
     res.status(200).json(formatResponse(true, 'Post retrieved', { post: postObj }));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -150,7 +166,12 @@ export const likePost = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    const hasLiked = post.likes?.includes(userId);
+    if (!canAccessPost(post, req.user)) {
+      res.status(403).json(formatResponse(false, 'You do not have access to this post'));
+      return;
+    }
+
+    const hasLiked = containsId(post.likes, userId);
 
     if (hasLiked) {
       await Post.findByIdAndUpdate(postId, { $pull: { likes: userId } });
@@ -187,10 +208,15 @@ export const commentOnPost = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
+    if (!canAccessPost(post, req.user)) {
+      res.status(403).json(formatResponse(false, 'You do not have access to this post'));
+      return;
+    }
+
     const comment = {
       author: req.user._id,
       content: sanitizeContent(content),
-      isAnonymous,
+      isAnonymous: isAnonymous === true,
       createdAt: new Date(),
     };
 
@@ -210,7 +236,11 @@ export const commentOnPost = async (req: any, res: Response): Promise<void> => {
 
     await cacheDeletePattern(`feed:${req.user.institution}:*`);
 
-    res.status(201).json(formatResponse(true, 'Comment added successfully', { comment }));
+    res.status(201).json(
+      formatResponse(true, 'Comment added successfully', {
+        comment: comment.isAnonymous ? { ...comment, author: null } : comment,
+      })
+    );
   } catch (error: any) {
     res.status(400).json(formatResponse(false, error.message));
   }
@@ -226,12 +256,9 @@ export const deletePost = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    // Check ownership or admin
-    if (
-      post.author?.toString() !== req.user._id.toString() &&
-      req.user.role !== UserRole.SUPER_ADMIN &&
-      req.user.role !== UserRole.INSTITUTION_ADMIN
-    ) {
+    // The author may always delete; admins only within their own institution.
+    const isAuthor = post.author?.toString() === req.user._id.toString();
+    if (!isAuthor && !canModeratePost(post, req.user)) {
       res.status(403).json(formatResponse(false, 'You do not have permission to delete this post'));
       return;
     }
@@ -247,11 +274,13 @@ export const deletePost = async (req: any, res: Response): Promise<void> => {
     }
 
     await Post.findByIdAndDelete(postId);
-    await cacheDeletePattern(`feed:${req.user.institution}:*`);
+    // Invalidate the owning institution's feed, which is not necessarily the
+    // caller's when a super admin deletes across tenants.
+    await cacheDeletePattern(`feed:${post.institution}:*`);
 
     res.status(200).json(formatResponse(true, 'Post deleted successfully'));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -287,7 +316,7 @@ export const getPendingAnonymousPosts = async (req: any, res: Response): Promise
       })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -302,12 +331,8 @@ export const moderatePost = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    // Check permissions
-    if (
-      req.user.role !== UserRole.SUPER_ADMIN &&
-      req.user.role !== UserRole.INSTITUTION_ADMIN
-    ) {
-      res.status(403).json(formatResponse(false, 'Insufficient permissions'));
+    if (!canModeratePost(post, req.user)) {
+      res.status(403).json(formatResponse(false, 'Cannot moderate posts from other institutions'));
       return;
     }
 
@@ -328,6 +353,6 @@ export const moderatePost = async (req: any, res: Response): Promise<void> => {
 
     res.status(200).json(formatResponse(true, `Post ${status} successfully`, { post }));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };

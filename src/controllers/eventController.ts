@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import Event from '../models/Event';
 import Notification from '../models/Notification';
 import { formatResponse, buildPagination } from '../utils/helpers';
+import { respondServerError } from '../middleware/errorHandler';
 import { cacheGet, cacheSet, cacheDeletePattern } from '../config/redis';
 import { uploadToCloudinary } from '../config/cloudinary';
 import { UserRole } from '../types';
@@ -73,7 +74,7 @@ export const getEvents = async (req: any, res: Response): Promise<void> => {
     await cacheSet(cacheKey, JSON.stringify(result), 300);
     res.status(200).json(formatResponse(true, 'Events retrieved', result));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -100,7 +101,7 @@ export const getEvent = async (req: any, res: Response): Promise<void> => {
 
     res.status(200).json(formatResponse(true, 'Event retrieved', { event }));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -204,6 +205,6 @@ export const deleteEvent = async (req: any, res: Response): Promise<void> => {
 
     res.status(200).json(formatResponse(true, 'Event deleted'));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };

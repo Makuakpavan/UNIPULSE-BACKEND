@@ -14,6 +14,16 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * Terminal response for an unexpected failure. Controllers catch their own
+ * errors, so without this they were returning raw `error.message` — leaking
+ * Mongoose/driver internals to clients and logging nothing.
+ */
+export const respondServerError = (req: Request, res: Response, error: unknown): void => {
+  logger.error(`Unhandled error in ${req.method} ${req.originalUrl}:`, error);
+  res.status(500).json(formatResponse(false, 'Internal server error'));
+};
+
 export const errorHandler = (
   err: Error | AppError,
   req: Request,

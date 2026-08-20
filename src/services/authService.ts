@@ -1,25 +1,55 @@
 import User from '../models/User';
-import { IUser, TokenPayload, UserRole } from '../types';
-import { generateAccessToken, generateRefreshToken, generateRandomToken } from '../utils/helpers';
+import { IUser, TokenPayload } from '../types';
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  generateTwoFactorChallengeToken,
+  verifyTwoFactorChallengeToken,
+  pick,
+} from '../utils/helpers';
 import { env } from '../config/env';
 import { redis } from '../config/redis';
 import speakeasy from 'speakeasy';
 
+/**
+ * The only fields a self-registering user may set. Everything else (role,
+ * isVerifiedStudent, isActive, isEmailVerified, refreshTokens, followers, ...)
+ * is left to the schema defaults or to an administrator.
+ */
+const REGISTRATION_FIELDS = [
+  'email',
+  'password',
+  'firstName',
+  'lastName',
+  'username',
+  'institution',
+  'department',
+  'level',
+  'matricNumber',
+  'phone',
+];
+
+const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+const blacklistKey = (token: string) => `${env.keyPrefix}blacklist:${token}`;
+
 export class AuthService {
   static async register(userData: Partial<IUser>) {
+    const safeData = pick<IUser>(userData, REGISTRATION_FIELDS);
+
     const existingUser = await User.findOne({
-      $or: [{ email: userData.email }, { username: userData.username }],
+      $or: [{ email: safeData.email }, { username: safeData.username }],
     });
 
     if (existingUser) {
       throw new Error('User with this email or username already exists');
     }
 
-    const user = await User.create(userData);
+    const user = await User.create(safeData);
     return user;
   }
 
-  static async login(email: string, password: string, ipAddress?: string) {
+  static async login(email: string, password: string) {
     const user = await User.findOne({ email }).select('+password +refreshTokens +twoFactorSecret');
 
     if (!user || !user.isActive) {
@@ -31,11 +61,14 @@ export class AuthService {
       throw new Error('Invalid email or password');
     }
 
-    // Check if 2FA is enabled
+    // Check if 2FA is enabled. The client gets a short-lived challenge token
+    // rather than a bare user id, so /2fa/verify cannot be pointed at an
+    // arbitrary account without first proving knowledge of that account's
+    // password.
     if (user.twoFactorEnabled) {
       return {
         requires2FA: true,
-        userId: user._id.toString(),
+        challengeToken: generateTwoFactorChallengeToken(user._id.toString()),
       };
     }
 
@@ -52,10 +85,11 @@ export class AuthService {
     };
   }
 
-  static async verify2FA(userId: string, token: string) {
+  static async verify2FA(challengeToken: string, token: string) {
+    const userId = verifyTwoFactorChallengeToken(challengeToken);
     const user = await User.findById(userId).select('+twoFactorSecret');
 
-    if (!user || !user.twoFactorSecret) {
+    if (!user || !user.isActive || !user.twoFactorEnabled || !user.twoFactorSecret) {
       throw new Error('Invalid 2FA setup');
     }
 
@@ -130,46 +164,73 @@ export class AuthService {
     return { message: '2FA disabled successfully' };
   }
 
-  static async refreshToken(refreshToken: string) {
+  /** Returns true if the token was explicitly revoked via logout/logout-all. */
+  private static async isBlacklisted(token: string): Promise<boolean> {
     try {
-      const { verifyRefreshToken } = await import('../utils/helpers.js');
-      const decoded = verifyRefreshToken(refreshToken);
-
-      const user = await User.findById(decoded.userId).select('+refreshTokens');
-      if (!user || !user.isActive) {
-        throw new Error('Invalid refresh token');
-      }
-
-      const tokenExists = user.refreshTokens.some(
-        (rt) => rt.token === refreshToken && rt.expiresAt > new Date()
-      );
-
-      if (!tokenExists) {
-        throw new Error('Invalid refresh token');
-      }
-
-      // Rotate refresh token
-      const tokens = await this.generateTokens(user);
-
-      // Remove old refresh token
-      user.refreshTokens = user.refreshTokens.filter((rt) => rt.token !== refreshToken);
-      await user.save();
-
-      return tokens;
+      return (await redis.get(blacklistKey(token))) !== null;
     } catch {
-      throw new Error('Invalid refresh token');
+      // Redis unavailable: fall back to the persisted refreshTokens list, which
+      // is the authoritative store. Do not fail open on a cache outage alone.
+      return false;
     }
   }
 
+  private static async blacklist(token: string): Promise<void> {
+    try {
+      await redis.setex(blacklistKey(token), REFRESH_TOKEN_TTL_SECONDS, '1');
+    } catch {
+      // Revocation is still enforced by removing the token from the user doc.
+    }
+  }
+
+  static async refreshToken(refreshToken: string) {
+    const { verifyRefreshToken } = await import('../utils/helpers.js');
+
+    let decoded: TokenPayload;
+    try {
+      decoded = verifyRefreshToken(refreshToken);
+    } catch {
+      throw new Error('Invalid refresh token');
+    }
+
+    if (await this.isBlacklisted(refreshToken)) {
+      throw new Error('Invalid refresh token');
+    }
+
+    const user = await User.findById(decoded.userId).select('+refreshTokens');
+    if (!user || !user.isActive) {
+      throw new Error('Invalid refresh token');
+    }
+
+    const tokenExists = user.refreshTokens.some(
+      (rt) => rt.token === refreshToken && rt.expiresAt > new Date()
+    );
+
+    if (!tokenExists) {
+      throw new Error('Invalid refresh token');
+    }
+
+    // Rotate: drop the presented token first so a single save persists both the
+    // removal and the replacement.
+    user.refreshTokens = user.refreshTokens.filter((rt) => rt.token !== refreshToken);
+    const tokens = await this.generateTokens(user);
+    await this.blacklist(refreshToken);
+
+    return tokens;
+  }
+
   static async logout(userId: string, refreshToken: string) {
+    if (!refreshToken) {
+      throw new Error('Refresh token required');
+    }
+
     const user = await User.findById(userId).select('+refreshTokens');
     if (user) {
       user.refreshTokens = user.refreshTokens.filter((rt) => rt.token !== refreshToken);
       await user.save();
     }
 
-    // Also blacklist in Redis
-    await redis.setex(`blacklist:${refreshToken}`, 7 * 24 * 60 * 60, '1');
+    await this.blacklist(refreshToken);
 
     return { message: 'Logged out successfully' };
   }
@@ -177,10 +238,7 @@ export class AuthService {
   static async logoutAll(userId: string) {
     const user = await User.findById(userId).select('+refreshTokens');
     if (user) {
-      // Blacklist all refresh tokens
-      for (const rt of user.refreshTokens) {
-        await redis.setex(`blacklist:${rt.token}`, 7 * 24 * 60 * 60, '1');
-      }
+      await Promise.all(user.refreshTokens.map((rt) => this.blacklist(rt.token)));
       user.refreshTokens = [];
       await user.save();
     }

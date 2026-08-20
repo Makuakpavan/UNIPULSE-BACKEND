@@ -25,6 +25,19 @@ export const loginValidator = [
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
+export const verify2FAValidator = [
+  body('challengeToken').isString().notEmpty().withMessage('Challenge token is required'),
+  body('token').isString().isLength({ min: 6, max: 6 }).isNumeric().withMessage('A 6-digit code is required'),
+];
+
+export const twoFactorCodeValidator = [
+  body('token').isString().isLength({ min: 6, max: 6 }).isNumeric().withMessage('A 6-digit code is required'),
+];
+
+export const refreshTokenValidator = [
+  body('refreshToken').isString().notEmpty().withMessage('Refresh token is required'),
+];
+
 export const createPostValidator = [
   body('content').trim().isLength({ min: 1, max: 2000 }).withMessage('Content must be 1-2000 characters'),
   body('visibility').optional().isIn(['public', 'anonymous']).withMessage('Visibility must be public or anonymous'),
@@ -51,10 +64,24 @@ export const createMarketplaceItemValidator = [
 ];
 
 export const createCommunityValidator = [
-  body('name').trim().notEmpty().withMessage('Community name is required'),
-  body('description').trim().notEmpty().withMessage('Description is required'),
+  body('name').trim().notEmpty().isLength({ max: 100 }).withMessage('Community name is required'),
+  body('description').trim().notEmpty().isLength({ max: 1000 }).withMessage('Description is required'),
   body('isPrivate').optional().isBoolean(),
   body('tags').optional().isArray({ max: 10 }),
+];
+
+export const commentValidator = [
+  body('content').trim().isLength({ min: 1, max: 1000 }).withMessage('Comment must be 1-1000 characters'),
+  body('isAnonymous').optional().isBoolean(),
+];
+
+export const moderatePostValidator = [
+  body('status').isIn(['approved', 'rejected']).withMessage('Status must be approved or rejected'),
+];
+
+export const searchValidator = [
+  query('q').trim().isLength({ min: 1, max: 100 }).withMessage('Search query must be 1-100 characters'),
+  query('type').optional().isIn(['all', 'users', 'posts', 'events', 'communities', 'marketplace']),
 ];
 
 export const sendMessageValidator = [

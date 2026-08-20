@@ -3,7 +3,7 @@ import User from '../models/User';
 import Institution from '../models/Institution';
 import { formatResponse, buildPagination } from '../utils/helpers';
 import { cacheGet, cacheSet, cacheDelete } from '../config/redis';
-import { AppError } from '../middleware/errorHandler';
+import { AppError, respondServerError } from '../middleware/errorHandler';
 import { uploadToCloudinary } from '../config/cloudinary';
 import fs from 'fs';
 import logger from '../utils/logger';
@@ -14,7 +14,12 @@ export const getUserProfile = async (req: any, res: Response): Promise<void> => 
     const { userId } = req.params;
     const currentUser = req.user;
 
-    const cacheKey = `user:profile:${userId}`;
+    // The cache key is scoped to the viewer's access class. Keying on the target
+    // user alone would let a warmed entry serve a private or institution-only
+    // profile to a viewer who fails the checks further down.
+    const viewerScope =
+      userId === currentUser._id.toString() ? 'self' : `inst:${currentUser.institution}`;
+    const cacheKey = `user:profile:${userId}:${viewerScope}`;
     const cached = await cacheGet(cacheKey);
     if (cached) {
       res.status(200).json(formatResponse(true, 'User profile retrieved', JSON.parse(cached)));
@@ -31,14 +36,21 @@ export const getUserProfile = async (req: any, res: Response): Promise<void> => 
     }
 
     // Check visibility permissions
-    if (user.profileVisibility === 'private' && user._id.toString() !== currentUser._id.toString()) {
+    const isSelf = user._id.toString() === currentUser._id.toString();
+
+    if (user.profileVisibility === 'private' && !isSelf) {
       res.status(403).json(formatResponse(false, 'This profile is private'));
       return;
     }
 
+    // `institution` is populated above, so compare the id rather than the
+    // document — stringifying the populated doc never matches a raw ObjectId.
+    const targetInstitutionId = (user.institution as any)?._id?.toString();
+
     if (
       user.profileVisibility === 'institution_only' &&
-      user.institution?.toString() !== currentUser.institution?.toString()
+      !isSelf &&
+      targetInstitutionId !== currentUser.institution?.toString()
     ) {
       res.status(403).json(formatResponse(false, 'This profile is only visible to institution members'));
       return;
@@ -64,7 +76,7 @@ export const getUserProfile = async (req: any, res: Response): Promise<void> => 
     await cacheSet(cacheKey, JSON.stringify(profile), 300);
     res.status(200).json(formatResponse(true, 'User profile retrieved', profile));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -167,7 +179,7 @@ export const getFollowers = async (req: any, res: Response): Promise<void> => {
       })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -193,7 +205,7 @@ export const getFollowing = async (req: any, res: Response): Promise<void> => {
       })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -226,7 +238,7 @@ export const getInstitutions = async (req: Request, res: Response): Promise<void
       })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 

@@ -19,8 +19,8 @@ export const env = {
 
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
 
-  jwtAccessSecret: process.env.JWT_ACCESS_SECRET || 'default_access_secret',
-  jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || 'default_refresh_secret',
+  jwtAccessSecret: process.env.JWT_ACCESS_SECRET || 'insecure_dev_access_secret',
+  jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || 'insecure_dev_refresh_secret',
   jwtAccessExpiry: process.env.JWT_ACCESS_EXPIRY || '15m',
   jwtRefreshExpiry: process.env.JWT_REFRESH_EXPIRY || '7d',
 
@@ -46,3 +46,40 @@ export const env = {
   // Prefix for keys to isolate environments in Redis and other key-value stores
   keyPrefix: process.env.KEY_PREFIX || `${nodeEnv}:`,
 };
+
+/**
+ * Fail fast rather than booting with placeholder credentials. Outside of
+ * development a missing JWT secret means every token is signed with a value
+ * that is public in this repository.
+ */
+const REQUIRED_IN_PRODUCTION: [string, string | undefined][] = [
+  ['JWT_ACCESS_SECRET', process.env.JWT_ACCESS_SECRET],
+  ['JWT_REFRESH_SECRET', process.env.JWT_REFRESH_SECRET],
+  ['MONGODB_URI', process.env.MONGODB_URI],
+  ['CLIENT_URL', process.env.CLIENT_URL],
+];
+
+if (nodeEnv !== 'development' && nodeEnv !== 'test') {
+  const problems: string[] = [];
+
+  for (const [name, value] of REQUIRED_IN_PRODUCTION) {
+    if (!value) problems.push(`${name} is not set`);
+  }
+
+  for (const name of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET']) {
+    const value = process.env[name];
+    if (value && value.length < 32) {
+      problems.push(`${name} must be at least 32 characters`);
+    }
+  }
+
+  if (process.env.JWT_ACCESS_SECRET && process.env.JWT_ACCESS_SECRET === process.env.JWT_REFRESH_SECRET) {
+    problems.push('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ');
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `Invalid configuration for NODE_ENV=${nodeEnv}:\n  - ${problems.join('\n  - ')}`
+    );
+  }
+}

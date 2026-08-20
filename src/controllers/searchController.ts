@@ -5,6 +5,7 @@ import Event from '../models/Event';
 import Community from '../models/Community';
 import MarketplaceItem from '../models/MarketplaceItem';
 import { formatResponse, buildPagination } from '../utils/helpers';
+import { respondServerError } from '../middleware/errorHandler';
 import { PostStatus } from '../types';
 
 export const globalSearch = async (req: any, res: Response): Promise<void> => {
@@ -63,6 +64,6 @@ export const globalSearch = async (req: any, res: Response): Promise<void> => {
 
     res.status(200).json(formatResponse(true, 'Search results', results));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };

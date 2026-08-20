@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import Message from '../models/Message';
 import User from '../models/User';
 import { formatResponse, buildPagination } from '../utils/helpers';
+import { respondServerError } from '../middleware/errorHandler';
 import { socketService } from '../services/socketService';
 import { UserRole } from '../types';
 
@@ -86,7 +87,7 @@ export const getConversations = async (req: any, res: Response): Promise<void> =
 
     res.status(200).json(formatResponse(true, 'Conversations retrieved', { conversations }));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -130,7 +131,7 @@ export const getMessages = async (req: any, res: Response): Promise<void> => {
       })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -142,6 +143,6 @@ export const getUnreadCount = async (req: any, res: Response): Promise<void> => 
     });
     res.status(200).json(formatResponse(true, 'Unread count retrieved', { count }));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };

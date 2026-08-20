@@ -1,20 +1,13 @@
 import { Request, Response } from 'express';
-import { validationResult } from 'express-validator';
 import { AuthService } from '../services/authService';
 import { EmailService } from '../services/emailService';
 import User from '../models/User';
 import { formatResponse } from '../utils/helpers';
-import { AppError } from '../middleware/errorHandler';
+import { respondServerError } from '../middleware/errorHandler';
 import logger from '../utils/logger';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json(formatResponse(false, 'Validation error', undefined, { errors: errors.array() }));
-      return;
-    }
-
     const user = await AuthService.register(req.body);
 
     // Send welcome email (non-blocking)
@@ -44,20 +37,14 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json(formatResponse(false, 'Validation error', undefined, { errors: errors.array() }));
-      return;
-    }
-
     const { email, password } = req.body;
-    const result = await AuthService.login(email, password, req.ip);
+    const result = await AuthService.login(email, password);
 
     if (result.requires2FA) {
       res.status(200).json(
         formatResponse(true, '2FA required', {
           requires2FA: true,
-          userId: result.userId,
+          challengeToken: result.challengeToken,
         })
       );
       return;
@@ -72,8 +59,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
 export const verify2FA = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userId, token } = req.body;
-    const result = await AuthService.verify2FA(userId, token);
+    const { challengeToken, token } = req.body;
+    const result = await AuthService.verify2FA(challengeToken, token);
     res.status(200).json(formatResponse(true, '2FA verification successful', result));
   } catch (error: any) {
     res.status(401).json(formatResponse(false, error.message));
@@ -112,11 +99,6 @@ export const disable2FA = async (req: any, res: Response): Promise<void> => {
 export const refreshToken = async (req: Request, res: Response): Promise<void> => {
   try {
     const { refreshToken } = req.body;
-    if (!refreshToken) {
-      res.status(400).json(formatResponse(false, 'Refresh token required'));
-      return;
-    }
-
     const tokens = await AuthService.refreshToken(refreshToken);
     res.status(200).json(formatResponse(true, 'Token refreshed', tokens));
   } catch (error: any) {
@@ -156,7 +138,7 @@ export const getMe = async (req: any, res: Response): Promise<void> => {
 
     res.status(200).json(formatResponse(true, 'User profile retrieved', { user }));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 

@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import User from '../models/User';
-import { AuthenticatedRequest, TokenPayload, UserRole } from '../types';
+import { AuthenticatedRequest, TokenPayload } from '../types';
 import { env } from '../config/env';
 import { formatResponse } from '../utils/helpers';
 import logger from '../utils/logger';
@@ -28,7 +28,7 @@ export const authenticate = async (
 
     const decoded = jwt.verify(token, env.jwtAccessSecret) as TokenPayload;
 
-    const user = await User.findById(decoded.userId).select('+password');
+    const user = await User.findById(decoded.userId);
 
     if (!user || !user.isActive) {
       res.status(401).json(formatResponse(false, 'User not found or deactivated'));

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import Community from '../models/Community';
 import Post from '../models/Post';
 import { formatResponse, buildPagination } from '../utils/helpers';
+import { respondServerError } from '../middleware/errorHandler';
 import { cacheGet, cacheSet, cacheDeletePattern } from '../config/redis';
 import { uploadToCloudinary } from '../config/cloudinary';
 import { UserRole } from '../types';
@@ -85,7 +86,7 @@ export const getCommunities = async (req: any, res: Response): Promise<void> => 
     await cacheSet(cacheKey, JSON.stringify(result), 300);
     res.status(200).json(formatResponse(true, 'Communities retrieved', result));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -118,7 +119,7 @@ export const getCommunity = async (req: any, res: Response): Promise<void> => {
 
     res.status(200).json(formatResponse(true, 'Community retrieved', { community }));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -218,6 +219,6 @@ export const getCommunityPosts = async (req: any, res: Response): Promise<void> 
       })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };

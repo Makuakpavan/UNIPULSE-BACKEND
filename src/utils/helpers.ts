@@ -27,8 +27,63 @@ export const verifyRefreshToken = (token: string): TokenPayload => {
   return jwt.verify(token, String(env.jwtRefreshSecret)) as TokenPayload;
 };
 
+/**
+ * Short-lived token issued after a successful password check when the account
+ * has 2FA enabled. It is not a session token: it only names the account that
+ * may complete the TOTP step.
+ */
+export const generateTwoFactorChallengeToken = (userId: string): string =>
+  jwt.sign({ userId, purpose: '2fa' }, String(env.jwtAccessSecret), { expiresIn: '5m' });
+
+export const verifyTwoFactorChallengeToken = (token: string): string => {
+  let payload: { userId?: string; purpose?: string };
+  try {
+    payload = jwt.verify(token, String(env.jwtAccessSecret)) as typeof payload;
+  } catch {
+    throw new Error('Invalid or expired 2FA challenge');
+  }
+
+  // An access token would also verify here; the purpose claim keeps the two apart.
+  if (payload.purpose !== '2fa' || !payload.userId) {
+    throw new Error('Invalid or expired 2FA challenge');
+  }
+
+  return payload.userId;
+};
+
 export const generateRandomToken = (length: number = 32): string => {
   return crypto.randomBytes(length).toString('hex');
+};
+
+/**
+ * Escape regex metacharacters so user input can be used in a $regex query
+ * without altering the pattern or causing catastrophic backtracking.
+ */
+export const escapeRegex = (input: string): string =>
+  input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Membership test for arrays of ObjectIds. `Array.prototype.includes` compares
+ * by reference/SameValueZero, so it never matches an ObjectId against a string
+ * (or against another ObjectId instance with the same value).
+ */
+export const containsId = (
+  list: unknown[] | undefined | null,
+  id: unknown
+): boolean => {
+  if (!list || !id) return false;
+  const target = id.toString();
+  return list.some((entry) => entry?.toString() === target);
+};
+
+/** Copy only the listed fields from an untrusted object (mass-assignment guard). */
+export const pick = <T extends object>(source: any, fields: string[]): Partial<T> => {
+  const result: any = {};
+  if (!source || typeof source !== 'object') return result;
+  for (const field of fields) {
+    if (source[field] !== undefined) result[field] = source[field];
+  }
+  return result;
 };
 
 export const sanitizeContent = (content: string): string => {

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import Notification from '../models/Notification';
 import { formatResponse, buildPagination } from '../utils/helpers';
+import { respondServerError } from '../middleware/errorHandler';
 
 export const getNotifications = async (req: any, res: Response): Promise<void> => {
   try {
@@ -26,7 +27,7 @@ export const getNotifications = async (req: any, res: Response): Promise<void> =
       })
     );
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 
@@ -51,7 +52,7 @@ export const markAllAsRead = async (req: any, res: Response): Promise<void> => {
     );
     res.status(200).json(formatResponse(true, 'All notifications marked as read'));
   } catch (error: any) {
-    res.status(500).json(formatResponse(false, error.message));
+    respondServerError(req, res, error);
   }
 };
 

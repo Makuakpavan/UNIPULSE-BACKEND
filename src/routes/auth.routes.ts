@@ -5,17 +5,22 @@ import {
 } from '../controllers/authController';
 import { authenticate } from '../middleware/auth';
 import { authRateLimiter } from '../middleware/rateLimiter';
-import { registerValidator, loginValidator } from '../utils/validators';
+import { validate } from '../middleware/validate';
+import {
+  registerValidator, loginValidator, verify2FAValidator,
+  twoFactorCodeValidator, refreshTokenValidator,
+} from '../utils/validators';
 
 const router = Router();
 
-router.post('/register', registerValidator, register);
-router.post('/login', authRateLimiter, loginValidator, login);
-router.post('/2fa/verify', verify2FA);
+router.post('/register', authRateLimiter, registerValidator, validate, register);
+router.post('/login', authRateLimiter, loginValidator, validate, login);
+// Unauthenticated and grants a full session on success: throttle like login.
+router.post('/2fa/verify', authRateLimiter, verify2FAValidator, validate, verify2FA);
 router.post('/2fa/setup', authenticate, setup2FA);
-router.post('/2fa/enable', authenticate, enable2FA);
+router.post('/2fa/enable', authenticate, twoFactorCodeValidator, validate, enable2FA);
 router.post('/2fa/disable', authenticate, disable2FA);
-router.post('/refresh', refreshToken);
+router.post('/refresh', authRateLimiter, refreshTokenValidator, validate, refreshToken);
 router.post('/logout', authenticate, logout);
 router.post('/logout-all', authenticate, logoutAll);
 router.get('/me', authenticate, getMe);
