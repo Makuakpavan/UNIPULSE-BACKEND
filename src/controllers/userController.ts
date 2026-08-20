@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import User from '../models/User';
 import Institution from '../models/Institution';
-import { formatResponse, buildPagination } from '../utils/helpers';
-import { cacheGet, cacheSet, cacheDelete } from '../config/redis';
+import { formatResponse, buildPagination, containsId, escapeRegex } from '../utils/helpers';
+import { cacheGet, cacheSet, cacheDeletePattern } from '../config/redis';
 import { AppError, respondServerError } from '../middleware/errorHandler';
 import { uploadToCloudinary } from '../config/cloudinary';
 import fs from 'fs';
@@ -104,7 +104,8 @@ export const updateProfile = async (req: any, res: Response): Promise<void> => {
       { new: true, runValidators: true }
     ).select('-password -refreshTokens -twoFactorSecret');
 
-    await cacheDelete(`user:profile:${req.user._id}`);
+    // Profile entries are keyed per viewer scope, so clear the whole set.
+    await cacheDeletePattern(`user:profile:${req.user._id}:*`);
 
     res.status(200).json(formatResponse(true, 'Profile updated successfully', { user }));
   } catch (error: any) {
@@ -128,7 +129,7 @@ export const followUser = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    const isFollowing = req.user.following?.includes(userId);
+    const isFollowing = containsId(req.user.following, userId);
 
     if (isFollowing) {
       // Unfollow
@@ -218,9 +219,10 @@ export const getInstitutions = async (req: Request, res: Response): Promise<void
 
     const query: any = { isActive: true };
     if (search) {
+      const safeSearch = escapeRegex(search);
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { location: { $regex: search, $options: 'i' } },
+        { name: { $regex: safeSearch, $options: 'i' } },
+        { location: { $regex: safeSearch, $options: 'i' } },
       ];
     }
 

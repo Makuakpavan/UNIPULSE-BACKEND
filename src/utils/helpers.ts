@@ -63,17 +63,31 @@ export const escapeRegex = (input: string): string =>
   input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
+ * Normalise anything that identifies a document to its id string: a raw
+ * ObjectId, a populated document, or a lean `{ _id }` object. A hydrated
+ * document's own `toString()` returns its inspect form rather than its id, so
+ * the `_id` hop is what makes populated arrays comparable.
+ */
+const toIdString = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  const raw = (value as any)._id ?? value;
+  return raw ? raw.toString() : null;
+};
+
+/**
  * Membership test for arrays of ObjectIds. `Array.prototype.includes` compares
  * by reference/SameValueZero, so it never matches an ObjectId against a string
- * (or against another ObjectId instance with the same value).
+ * (or against another ObjectId instance with the same value). Handles populated
+ * arrays as well as raw id arrays.
  */
 export const containsId = (
   list: unknown[] | undefined | null,
   id: unknown
 ): boolean => {
   if (!list || !id) return false;
-  const target = id.toString();
-  return list.some((entry) => entry?.toString() === target);
+  const target = toIdString(id);
+  if (!target) return false;
+  return list.some((entry) => toIdString(entry) === target);
 };
 
 /** Copy only the listed fields from an untrusted object (mass-assignment guard). */

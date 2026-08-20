@@ -7,23 +7,17 @@ import { respondServerError } from '../middleware/errorHandler';
 import { cacheGet, cacheSet, cacheDelete, cacheDeletePattern } from '../config/redis';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 import { PostStatus, PostVisibility, UserRole } from '../types';
+import { canAccessInstitution, isAdminOfInstitution } from '../utils/permissions';
 import fs from 'fs';
 import logger from '../utils/logger';
 
 /** Posts are institution-scoped; only a super admin reads across tenants. */
 const canAccessPost = (post: any, user: any): boolean =>
-  user.role === UserRole.SUPER_ADMIN ||
-  post.institution?.toString() === user.institution?.toString();
+  canAccessInstitution(post.institution, user);
 
-/**
- * Moderators act only within their own institution. A super admin is global;
- * an institution admin is not.
- */
-const canModeratePost = (post: any, user: any): boolean => {
-  if (user.role === UserRole.SUPER_ADMIN) return true;
-  if (user.role !== UserRole.INSTITUTION_ADMIN) return false;
-  return post.institution?.toString() === user.institution?.toString();
-};
+/** Moderation is limited to admins of the post's own institution. */
+const canModeratePost = (post: any, user: any): boolean =>
+  isAdminOfInstitution(post.institution, user);
 
 export const createPost = async (req: any, res: Response): Promise<void> => {
   try {

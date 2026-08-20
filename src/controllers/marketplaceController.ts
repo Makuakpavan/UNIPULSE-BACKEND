@@ -1,16 +1,23 @@
 import { Request, Response } from 'express';
 import MarketplaceItem from '../models/MarketplaceItem';
-import { formatResponse, buildPagination } from '../utils/helpers';
+import { formatResponse, buildPagination, escapeRegex, pick } from '../utils/helpers';
 import { respondServerError } from '../middleware/errorHandler';
 import { cacheGet, cacheSet, cacheDeletePattern } from '../config/redis';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
-import { MarketplaceStatus, UserRole } from '../types';
+import { MarketplaceStatus } from '../types';
+import { canAccessInstitution, canManage } from '../utils/permissions';
 import fs from 'fs';
+
+/**
+ * Client-settable listing fields. `isPremium`, `views`, `status`, `seller` and
+ * `institution` are server-owned.
+ */
+const ITEM_FIELDS = ['title', 'description', 'price', 'currency', 'category', 'condition'];
 
 export const createItem = async (req: any, res: Response): Promise<void> => {
   try {
-    const itemData = {
-      ...req.body,
+    const itemData: any = {
+      ...pick(req.body, ITEM_FIELDS),
       seller: req.user._id,
       institution: req.user.institution,
     };
@@ -49,7 +56,13 @@ export const getItems = async (req: any, res: Response): Promise<void> => {
     const search = req.query.search as string;
     const { skip } = buildPagination(page, limit);
 
-    const cacheKey = `marketplace:${req.user.institution}:${page}:${limit}:${category || 'all'}`;
+    // Every dimension that narrows the query must appear in the key, otherwise
+    // a filtered request is served the previous unfiltered result (and vice versa).
+    const cacheKey = [
+      'marketplace', req.user.institution, page, limit,
+      category || 'all', condition || 'all',
+      minPrice ?? 'min', maxPrice ?? 'max', search || 'none',
+    ].join(':');
     const cached = await cacheGet(cacheKey);
     if (cached) {
       res.status(200).json(formatResponse(true, 'Items retrieved', JSON.parse(cached)));
@@ -69,9 +82,10 @@ export const getItems = async (req: any, res: Response): Promise<void> => {
       if (maxPrice !== undefined) query.price.$lte = maxPrice;
     }
     if (search) {
+      const safeSearch = escapeRegex(search);
       query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
+        { title: { $regex: safeSearch, $options: 'i' } },
+        { description: { $regex: safeSearch, $options: 'i' } },
       ];
     }
 
@@ -109,10 +123,7 @@ export const getItem = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    if (
-      item.institution?.toString() !== req.user.institution?.toString() &&
-      req.user.role !== UserRole.SUPER_ADMIN
-    ) {
+    if (!canAccessInstitution(item.institution, req.user)) {
       res.status(403).json(formatResponse(false, 'Access denied'));
       return;
     }
@@ -141,19 +152,21 @@ export const updateItem = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
+    const updates: any = pick(req.body, ITEM_FIELDS);
+
     if (req.files && req.files.length > 0) {
       const uploadPromises = req.files.map((file: any) =>
         uploadToCloudinary(file.path, 'unipulse/marketplace')
       );
       const uploads = await Promise.all(uploadPromises);
-      req.body.images = [...(item.images || []), ...uploads.map((u) => u.url)];
+      updates.images = [...(item.images || []), ...uploads.map((u) => u.url)];
 
       req.files.forEach((file: any) => {
         try { fs.unlinkSync(file.path); } catch {}
       });
     }
 
-    const updated = await MarketplaceItem.findByIdAndUpdate(itemId, req.body, { new: true })
+    const updated = await MarketplaceItem.findByIdAndUpdate(itemId, updates, { new: true, runValidators: true })
       .populate('seller', 'firstName lastName username avatar');
 
     await cacheDeletePattern(`marketplace:${item.institution}:*`);
@@ -174,11 +187,7 @@ export const deleteItem = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    if (
-      item.seller?.toString() !== req.user._id.toString() &&
-      req.user.role !== UserRole.SUPER_ADMIN &&
-      req.user.role !== UserRole.INSTITUTION_ADMIN
-    ) {
+    if (!canManage({ owner: item.seller, institution: item.institution }, req.user)) {
       res.status(403).json(formatResponse(false, 'Permission denied'));
       return;
     }

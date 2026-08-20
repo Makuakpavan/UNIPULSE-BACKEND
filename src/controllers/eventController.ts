@@ -1,17 +1,26 @@
 import { Request, Response } from 'express';
 import Event from '../models/Event';
 import Notification from '../models/Notification';
-import { formatResponse, buildPagination } from '../utils/helpers';
+import { formatResponse, buildPagination, containsId, pick } from '../utils/helpers';
 import { respondServerError } from '../middleware/errorHandler';
 import { cacheGet, cacheSet, cacheDeletePattern } from '../config/redis';
 import { uploadToCloudinary } from '../config/cloudinary';
-import { UserRole } from '../types';
+import { canAccessInstitution, canManage } from '../utils/permissions';
 import fs from 'fs';
+
+/**
+ * Client-settable event fields. `isApproved`, `attendees`, `institution` and
+ * `organizer` are deliberately absent — they are server-owned.
+ */
+const EVENT_FIELDS = [
+  'title', 'description', 'startDate', 'endDate', 'location',
+  'isOnline', 'meetingLink', 'category', 'maxAttendees',
+];
 
 export const createEvent = async (req: any, res: Response): Promise<void> => {
   try {
-    const eventData = {
-      ...req.body,
+    const eventData: any = {
+      ...pick(req.body, EVENT_FIELDS),
       organizer: req.user._id,
       institution: req.user.institution,
     };
@@ -91,10 +100,7 @@ export const getEvent = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    if (
-      event.institution?.toString() !== req.user.institution?.toString() &&
-      req.user.role !== UserRole.SUPER_ADMIN
-    ) {
+    if (!canAccessInstitution(event.institution, req.user)) {
       res.status(403).json(formatResponse(false, 'Access denied'));
       return;
     }
@@ -116,7 +122,12 @@ export const attendEvent = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    const isAttending = event.attendees?.includes(userId);
+    if (!canAccessInstitution(event.institution, req.user)) {
+      res.status(403).json(formatResponse(false, 'Access denied'));
+      return;
+    }
+
+    const isAttending = containsId(event.attendees, userId);
 
     if (isAttending) {
       await Event.findByIdAndUpdate(eventId, { $pull: { attendees: userId } });
@@ -155,22 +166,20 @@ export const updateEvent = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    if (
-      event.organizer?.toString() !== req.user._id.toString() &&
-      req.user.role !== UserRole.SUPER_ADMIN &&
-      req.user.role !== UserRole.INSTITUTION_ADMIN
-    ) {
+    if (!canManage({ owner: event.organizer, institution: event.institution }, req.user)) {
       res.status(403).json(formatResponse(false, 'Permission denied'));
       return;
     }
 
+    const updates: any = pick(req.body, EVENT_FIELDS);
+
     if (req.file) {
       const uploadResult = await uploadToCloudinary(req.file.path, 'unipulse/events');
-      req.body.coverImage = uploadResult.url;
+      updates.coverImage = uploadResult.url;
       fs.unlinkSync(req.file.path);
     }
 
-    const updated = await Event.findByIdAndUpdate(eventId, req.body, { new: true })
+    const updated = await Event.findByIdAndUpdate(eventId, updates, { new: true, runValidators: true })
       .populate('organizer', 'firstName lastName username avatar');
 
     await cacheDeletePattern(`events:${event.institution}:*`);
@@ -191,11 +200,7 @@ export const deleteEvent = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    if (
-      event.organizer?.toString() !== req.user._id.toString() &&
-      req.user.role !== UserRole.SUPER_ADMIN &&
-      req.user.role !== UserRole.INSTITUTION_ADMIN
-    ) {
+    if (!canManage({ owner: event.organizer, institution: event.institution }, req.user)) {
       res.status(403).json(formatResponse(false, 'Permission denied'));
       return;
     }

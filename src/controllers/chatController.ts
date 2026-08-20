@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import Message from '../models/Message';
 import User from '../models/User';
-import { formatResponse, buildPagination } from '../utils/helpers';
+import { formatResponse, buildPagination, sanitizeContent } from '../utils/helpers';
 import { respondServerError } from '../middleware/errorHandler';
 import { socketService } from '../services/socketService';
 import { UserRole } from '../types';
@@ -33,7 +33,7 @@ export const sendMessage = async (req: any, res: Response): Promise<void> => {
     const message = await Message.create({
       sender: senderId,
       receiver: receiverId,
-      content,
+      content: sanitizeContent(content),
       isAnonymous,
     });
 
@@ -124,9 +124,18 @@ export const getMessages = async (req: any, res: Response): Promise<void> => {
       { isRead: true }
     );
 
+    // The live socket payload nulls the sender on anonymous messages; history
+    // has to do the same or the identity leaks on the next page load. The
+    // sender still sees their own messages attributed.
+    const sanitizedMessages = messages.map((message: any) => {
+      if (!message.isAnonymous) return message;
+      const senderId = message.sender?._id?.toString() ?? message.sender?.toString();
+      return senderId === currentUserId ? message : { ...message, sender: null };
+    });
+
     res.status(200).json(
       formatResponse(true, 'Messages retrieved', {
-        messages: messages.reverse(),
+        messages: sanitizedMessages.reverse(),
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
       })
     );

@@ -1,6 +1,7 @@
 import { Server as SocketServer } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
+import User from '../models/User';
 import { TokenPayload } from '../types';
 import logger from '../utils/logger';
 
@@ -20,9 +21,17 @@ class SocketService {
         }
 
         const decoded = jwt.verify(token as string, env.jwtAccessSecret) as TokenPayload;
+
+        // A valid token is not enough: mirror the REST `authenticate`
+        // middleware and reject accounts that have since been deactivated.
+        const user = await User.findById(decoded.userId).select('isActive institution role');
+        if (!user || !user.isActive) {
+          return next(new Error('User not found or deactivated'));
+        }
+
         socket.data.userId = decoded.userId;
-        socket.data.role = decoded.role;
-        socket.data.institutionId = decoded.institutionId;
+        socket.data.role = user.role;
+        socket.data.institutionId = user.institution?.toString();
 
         next();
       } catch {

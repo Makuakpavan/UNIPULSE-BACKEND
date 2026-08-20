@@ -4,7 +4,7 @@ import Post from '../models/Post';
 import Event from '../models/Event';
 import Community from '../models/Community';
 import MarketplaceItem from '../models/MarketplaceItem';
-import { formatResponse, buildPagination } from '../utils/helpers';
+import { formatResponse, buildPagination, escapeRegex } from '../utils/helpers';
 import { respondServerError } from '../middleware/errorHandler';
 import { PostStatus } from '../types';
 
@@ -17,7 +17,9 @@ export const globalSearch = async (req: any, res: Response): Promise<void> => {
 
     if (!q || typeof q !== 'string') { res.status(400).json(formatResponse(false, 'Search query is required')); return; }
 
-    const searchRegex = new RegExp(q, 'i');
+    // Escaped: an unescaped user pattern can rewrite the query or backtrack
+    // catastrophically against every indexed field below.
+    const searchRegex = new RegExp(escapeRegex(q), 'i');
     const institution = req.user.institution;
     let results: any = {};
     const searchType = type || 'all';

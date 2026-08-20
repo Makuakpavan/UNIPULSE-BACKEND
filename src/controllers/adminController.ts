@@ -17,6 +17,14 @@ export const getDashboardStats = async (req: any, res: Response): Promise<void> 
       institutionFilter.institution = req.user.institution;
     }
 
+    // AuditLog has no `institution` field — it is scoped through the acting
+    // user, the same way getAuditLogs does it.
+    const auditFilter: any = {};
+    if (req.user.role === UserRole.INSTITUTION_ADMIN) {
+      const usersInInstitution = await User.find({ institution: req.user.institution }).select('_id');
+      auditFilter.user = { $in: usersInInstitution.map((u) => u._id) };
+    }
+
     const [totalUsers, totalPosts, totalEvents, totalItems, pendingVerifications, pendingAnonymousPosts, recentAuditLogs] = await Promise.all([
       User.countDocuments({ ...institutionFilter, isActive: true }),
       Post.countDocuments({ ...institutionFilter }),
@@ -24,7 +32,7 @@ export const getDashboardStats = async (req: any, res: Response): Promise<void> 
       MarketplaceItem.countDocuments({ ...institutionFilter }),
       User.countDocuments({ ...institutionFilter, isVerifiedStudent: false, verificationDocuments: { $exists: true, $ne: [] } }),
       Post.countDocuments({ ...institutionFilter, status: 'pending', isAnonymous: true }),
-      AuditLog.find(institutionFilter).populate('user', 'firstName lastName username').sort({ createdAt: -1 }).limit(10).lean(),
+      AuditLog.find(auditFilter).populate('user', 'firstName lastName username').sort({ createdAt: -1 }).limit(10).lean(),
     ]);
 
     res.status(200).json(

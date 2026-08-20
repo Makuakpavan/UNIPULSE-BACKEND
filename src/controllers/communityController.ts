@@ -1,17 +1,20 @@
 import { Request, Response } from 'express';
 import Community from '../models/Community';
 import Post from '../models/Post';
-import { formatResponse, buildPagination } from '../utils/helpers';
+import { formatResponse, buildPagination, containsId, escapeRegex, pick } from '../utils/helpers';
 import { respondServerError } from '../middleware/errorHandler';
 import { cacheGet, cacheSet, cacheDeletePattern } from '../config/redis';
 import { uploadToCloudinary } from '../config/cloudinary';
 import { UserRole } from '../types';
 import fs from 'fs';
 
+/** Client-settable community fields; membership and counts are server-owned. */
+const COMMUNITY_FIELDS = ['name', 'description', 'isPrivate', 'tags', 'icon'];
+
 export const createCommunity = async (req: any, res: Response): Promise<void> => {
   try {
-    const communityData = {
-      ...req.body,
+    const communityData: any = {
+      ...pick(req.body, COMMUNITY_FIELDS),
       creator: req.user._id,
       institution: req.user.institution,
       members: [req.user._id],
@@ -55,13 +58,14 @@ export const getCommunities = async (req: any, res: Response): Promise<void> => 
     };
 
     if (search) {
+      const safeSearch = escapeRegex(search);
       query.$and = [
         query.$or ? { $or: query.$or } : {},
         {
           $or: [
-            { name: { $regex: search, $options: 'i' } },
-            { description: { $regex: search, $options: 'i' } },
-            { tags: { $in: [new RegExp(search, 'i')] } },
+            { name: { $regex: safeSearch, $options: 'i' } },
+            { description: { $regex: safeSearch, $options: 'i' } },
+            { tags: { $in: [new RegExp(safeSearch, 'i')] } },
           ],
         },
       ];
@@ -112,7 +116,7 @@ export const getCommunity = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    if (community.isPrivate && !community.members?.includes(req.user._id)) {
+    if (community.isPrivate && !containsId(community.members, req.user._id)) {
       res.status(403).json(formatResponse(false, 'This is a private community'));
       return;
     }
@@ -134,7 +138,7 @@ export const joinCommunity = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    if (community.members?.includes(userId)) {
+    if (containsId(community.members, userId)) {
       res.status(400).json(formatResponse(false, 'Already a member'));
       return;
     }
@@ -166,6 +170,12 @@ export const leaveCommunity = async (req: any, res: Response): Promise<void> => 
       return;
     }
 
+    // Without this a non-member could decrement memberCount on every call.
+    if (!containsId(community.members, userId)) {
+      res.status(400).json(formatResponse(false, 'Not a member of this community'));
+      return;
+    }
+
     await Community.findByIdAndUpdate(communityId, {
       $pull: { members: userId, moderators: userId },
       $inc: { memberCount: -1 },
@@ -190,7 +200,7 @@ export const getCommunityPosts = async (req: any, res: Response): Promise<void> 
       return;
     }
 
-    if (community.isPrivate && !community.members?.includes(req.user._id)) {
+    if (community.isPrivate && !containsId(community.members, req.user._id)) {
       res.status(403).json(formatResponse(false, 'Private community'));
       return;
     }

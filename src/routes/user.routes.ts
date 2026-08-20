@@ -5,15 +5,17 @@ import {
 } from '../controllers/userController';
 import { authenticate } from '../middleware/auth';
 import { uploadSingle } from '../middleware/upload';
+import { validate } from '../middleware/validate';
+import { paginationValidator, objectIdValidator, requestVerificationValidator } from '../utils/validators';
 
 const router = Router();
 
-router.get('/institutions', getInstitutions);
-router.get('/profile/:userId', authenticate, getUserProfile);
+router.get('/institutions', paginationValidator, validate, getInstitutions);
+router.get('/profile/:userId', authenticate, objectIdValidator('userId'), validate, getUserProfile);
 router.patch('/profile', authenticate, uploadSingle, updateProfile);
-router.post('/follow/:userId', authenticate, followUser);
-router.get('/followers/:userId', authenticate, getFollowers);
-router.get('/following/:userId', authenticate, getFollowing);
-router.post('/verify', authenticate, requestVerification);
+router.post('/follow/:userId', authenticate, objectIdValidator('userId'), validate, followUser);
+router.get('/followers/:userId', authenticate, objectIdValidator('userId'), paginationValidator, validate, getFollowers);
+router.get('/following/:userId', authenticate, objectIdValidator('userId'), paginationValidator, validate, getFollowing);
+router.post('/verify', authenticate, requestVerificationValidator, validate, requestVerification);
 
 export default router;

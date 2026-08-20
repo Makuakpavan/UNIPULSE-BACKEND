@@ -1,4 +1,5 @@
 import { body, param, query } from 'express-validator';
+import { UserRole } from '../types';
 
 export const registerValidator = [
   body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
@@ -97,4 +98,34 @@ export const paginationValidator = [
 
 export const objectIdValidator = (field: string) => [
   param(field).isMongoId().withMessage(`Valid ${field} is required`),
+];
+
+export const verifyStudentValidator = [
+  body('status').isIn(['approved', 'rejected']).withMessage('Status must be approved or rejected'),
+];
+
+export const manageUserValidator = [
+  body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
+  body('role').optional().isIn(Object.values(UserRole)).withMessage('Invalid role'),
+];
+
+export const institutionValidator = [
+  body('name').optional().trim().notEmpty().isLength({ max: 200 }),
+  body('slug').optional().trim().matches(/^[a-z0-9-]+$/).withMessage('Slug must be lowercase alphanumeric with dashes'),
+  body('location').optional().trim(),
+  body('website').optional().trim().isURL().withMessage('Website must be a valid URL'),
+  body('emailDomain').optional().trim(),
+  body('description').optional().trim().isLength({ max: 2000 }),
+  body('isActive').optional().isBoolean(),
+];
+
+export const createInstitutionValidator = [
+  body('name').trim().notEmpty().withMessage('Institution name is required'),
+  body('slug').trim().matches(/^[a-z0-9-]+$/).withMessage('Slug must be lowercase alphanumeric with dashes'),
+  ...institutionValidator.slice(2),
+];
+
+export const requestVerificationValidator = [
+  body('documents').isArray({ min: 1, max: 5 }).withMessage('Between 1 and 5 documents are required'),
+  body('documents.*').isString().trim().notEmpty().withMessage('Each document must be a non-empty string'),
 ];
