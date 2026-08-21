@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import User from '../models/User';
 import Institution from '../models/Institution';
-import { formatResponse, buildPagination, containsId, escapeRegex } from '../utils/helpers';
+import { formatResponse, buildPagination, containsId, escapeRegex, slugify } from '../utils/helpers';
 import { cacheGet, cacheSet, cacheDeletePattern } from '../config/redis';
 import { AppError, respondServerError } from '../middleware/errorHandler';
+import { InstitutionStatus } from '../types';
 import { uploadToCloudinary } from '../config/cloudinary';
 import fs from 'fs';
 import logger from '../utils/logger';
@@ -217,7 +218,13 @@ export const getInstitutions = async (req: Request, res: Response): Promise<void
     const search = req.query.search as string;
     const { skip } = buildPagination(page, limit);
 
-    const query: any = { isActive: true };
+    // `$nin` rather than `status: 'approved'` on purpose: institutions created
+    // before the status field existed have no `status` at all, and an equality
+    // match would drop every one of them out of the registration dropdown.
+    const query: any = {
+      isActive: true,
+      status: { $nin: [InstitutionStatus.PENDING, InstitutionStatus.REJECTED] },
+    };
     if (search) {
       const safeSearch = escapeRegex(search);
       query.$or = [
@@ -243,6 +250,92 @@ export const getInstitutions = async (req: Request, res: Response): Promise<void
     respondServerError(req, res, error);
   }
 };
+
+/**
+ * Public: a student whose university is not in the list proposes it during
+ * registration. The institution is created in PENDING state and stays out of
+ * `getInstitutions` until an admin approves it, but its id is returned right
+ * away so the student can finish signing up instead of being blocked on review.
+ *
+ * Resubmitting an existing university is not an error — the caller just gets
+ * the existing record back, which keeps the review queue free of duplicates.
+ */
+export const requestInstitution = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { name, location, website, emailDomain, description } = req.body;
+    const slug = slugify(name);
+
+    if (!slug) {
+      res.status(400).json(formatResponse(false, 'University name must contain letters or numbers'));
+      return;
+    }
+
+    const existing = await Institution.findOne({
+      $or: [{ slug }, { name: { $regex: `^${escapeRegex(name.trim())}$`, $options: 'i' } }],
+    });
+
+    if (existing) {
+      if (existing.status === InstitutionStatus.REJECTED) {
+        res.status(409).json(
+          formatResponse(false, 'This university was reviewed and declined. Contact your administrator.')
+        );
+        return;
+      }
+
+      const alreadyPending = existing.status === InstitutionStatus.PENDING;
+      res.status(200).json(
+        formatResponse(
+          true,
+          alreadyPending
+            ? 'This university has already been submitted and is awaiting approval'
+            : 'This university is already listed',
+          { institution: publicInstitution(existing) }
+        )
+      );
+      return;
+    }
+
+    const institution = await Institution.create({
+      name: name.trim(),
+      slug,
+      location: location || null,
+      website: website || null,
+      emailDomain: emailDomain ? emailDomain.toLowerCase() : null,
+      description: description || null,
+      status: InstitutionStatus.PENDING,
+      isActive: false,
+      // Registration is unauthenticated, so this is normally null; it is only
+      // set when an already-signed-in user submits.
+      submittedBy: req.user?._id || null,
+    });
+
+    logger.info(`Institution submitted for approval: ${institution.name} (${institution.slug})`);
+
+    res.status(201).json(
+      formatResponse(
+        true,
+        'University submitted for approval. You can complete registration now.',
+        { institution: publicInstitution(institution) }
+      )
+    );
+  } catch (error: any) {
+    // A unique-index race between the lookup above and the insert.
+    if (error?.code === 11000) {
+      res.status(409).json(formatResponse(false, 'This university has already been submitted'));
+      return;
+    }
+    respondServerError(req, res, error);
+  }
+};
+
+/** Never leak reviewer identities or rejection notes to an unauthenticated caller. */
+const publicInstitution = (institution: any) => ({
+  _id: institution._id,
+  name: institution.name,
+  slug: institution.slug,
+  location: institution.location,
+  status: institution.status,
+});
 
 export const requestVerification = async (req: any, res: Response): Promise<void> => {
   try {

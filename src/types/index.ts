@@ -25,6 +25,17 @@ export enum ProfileVisibility {
   PRIVATE = 'private',
 }
 
+/**
+ * Institutions seeded or created by a super admin are `approved` on sight.
+ * Ones proposed by a student during registration land in `pending` and stay out
+ * of the public list until an admin reviews them.
+ */
+export enum InstitutionStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+}
+
 export enum MarketplaceStatus {
   ACTIVE = 'active',
   SOLD = 'sold',
@@ -86,6 +97,11 @@ export interface IInstitution extends Document {
   website?: string;
   emailDomain?: string;
   isActive: boolean;
+  status: InstitutionStatus;
+  submittedBy?: Types.ObjectId;
+  reviewedBy?: Types.ObjectId;
+  reviewedAt?: Date;
+  rejectionReason?: string;
   adminCount: number;
   studentCount: number;
   createdAt: Date;

@@ -100,6 +100,19 @@ export const pick = <T extends object>(source: any, fields: string[]): Partial<T
   return result;
 };
 
+/**
+ * Derive a URL-safe slug from a free-text institution name. Students submit the
+ * name only — letting them choose the slug would hand them a way to squat on a
+ * real institution's identifier.
+ */
+export const slugify = (input: string): string =>
+  input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+
 export const sanitizeContent = (content: string): string => {
   return content
     .replace(/<script[^>]*>.*?<\/script>/gi, '')

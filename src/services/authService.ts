@@ -1,5 +1,6 @@
 import User from '../models/User';
-import { IUser, TokenPayload } from '../types';
+import Institution from '../models/Institution';
+import { IUser, InstitutionStatus, TokenPayload } from '../types';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -36,6 +37,24 @@ const blacklistKey = (token: string) => `${env.keyPrefix}blacklist:${token}`;
 export class AuthService {
   static async register(userData: Partial<IUser>) {
     const safeData = pick<IUser>(userData, REGISTRATION_FIELDS);
+
+    // `isMongoId()` in the validator only checks the shape. Mongoose does not
+    // verify that a `ref` target exists either, so without this a well-formed
+    // but unknown id produced a user stranded in an institution of one: empty
+    // feed, no events, nobody to message, and no visible error.
+    const institution = await Institution.findById(safeData.institution);
+
+    if (!institution) {
+      throw new Error('Selected university does not exist');
+    }
+
+    if (institution.status === InstitutionStatus.REJECTED || !institution.isActive) {
+      // A PENDING institution is deliberately allowed through — a student who
+      // just submitted their university must be able to finish signing up.
+      if (institution.status !== InstitutionStatus.PENDING) {
+        throw new Error('Selected university is not accepting registrations');
+      }
+    }
 
     const existingUser = await User.findOne({
       $or: [{ email: safeData.email }, { username: safeData.username }],

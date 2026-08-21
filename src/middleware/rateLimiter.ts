@@ -39,6 +39,22 @@ export const postRateLimiter = rateLimit({
   },
 });
 
+/**
+ * Guards the one unauthenticated write in the API. Without it anyone can fill
+ * the admin review queue with junk universities.
+ */
+export const institutionRequestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json(
+      formatResponse(false, 'Too many university submissions. Please try again later.')
+    );
+  },
+});
+
 export const uploadRateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 20, // 20 uploads per hour

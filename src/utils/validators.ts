@@ -125,6 +125,27 @@ export const createInstitutionValidator = [
   ...institutionValidator.slice(2),
 ];
 
+/**
+ * A student proposing a university supplies the name and optional details only.
+ * `slug`, `status` and `isActive` are server-owned.
+ */
+export const requestInstitutionValidator = [
+  body('name').trim().isLength({ min: 3, max: 200 }).withMessage('University name must be 3-200 characters'),
+  body('location').optional().trim().isLength({ max: 200 }),
+  body('website').optional({ values: 'falsy' }).trim().isURL().withMessage('Website must be a valid URL'),
+  body('emailDomain')
+    .optional({ values: 'falsy' })
+    .trim()
+    .matches(/^[a-z0-9.-]+\.[a-z]{2,}$/i)
+    .withMessage('Email domain must look like unilag.edu.ng'),
+  body('description').optional().trim().isLength({ max: 2000 }),
+];
+
+export const reviewInstitutionValidator = [
+  body('status').isIn(['approved', 'rejected']).withMessage('Status must be approved or rejected'),
+  body('rejectionReason').optional().trim().isLength({ max: 500 }),
+];
+
 export const requestVerificationValidator = [
   body('documents').isArray({ min: 1, max: 5 }).withMessage('Between 1 and 5 documents are required'),
   body('documents.*').isString().trim().notEmpty().withMessage('Each document must be a non-empty string'),

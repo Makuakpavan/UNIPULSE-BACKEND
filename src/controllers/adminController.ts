@@ -8,7 +8,7 @@ import Institution from '../models/Institution';
 import { EmailService } from '../services/emailService';
 import { formatResponse, buildPagination } from '../utils/helpers';
 import { respondServerError } from '../middleware/errorHandler';
-import { UserRole } from '../types';
+import { InstitutionStatus, UserRole } from '../types';
 
 export const getDashboardStats = async (req: any, res: Response): Promise<void> => {
   try {
@@ -25,19 +25,25 @@ export const getDashboardStats = async (req: any, res: Response): Promise<void> 
       auditFilter.user = { $in: usersInInstitution.map((u) => u._id) };
     }
 
-    const [totalUsers, totalPosts, totalEvents, totalItems, pendingVerifications, pendingAnonymousPosts, recentAuditLogs] = await Promise.all([
+    // Institutions are not institution-scoped, so the pending count is only
+    // meaningful — and only visible — to a super admin, who is the only role
+    // that can act on it.
+    const isSuperAdmin = req.user.role === UserRole.SUPER_ADMIN;
+
+    const [totalUsers, totalPosts, totalEvents, totalItems, pendingVerifications, pendingAnonymousPosts, pendingInstitutions, recentAuditLogs] = await Promise.all([
       User.countDocuments({ ...institutionFilter, isActive: true }),
       Post.countDocuments({ ...institutionFilter }),
       Event.countDocuments({ ...institutionFilter }),
       MarketplaceItem.countDocuments({ ...institutionFilter }),
       User.countDocuments({ ...institutionFilter, isVerifiedStudent: false, verificationDocuments: { $exists: true, $ne: [] } }),
       Post.countDocuments({ ...institutionFilter, status: 'pending', isAnonymous: true }),
+      isSuperAdmin ? Institution.countDocuments({ status: InstitutionStatus.PENDING }) : Promise.resolve(0),
       AuditLog.find(auditFilter).populate('user', 'firstName lastName username').sort({ createdAt: -1 }).limit(10).lean(),
     ]);
 
     res.status(200).json(
       formatResponse(true, 'Dashboard stats retrieved', {
-        stats: { totalUsers, totalPosts, totalEvents, totalItems, pendingVerifications, pendingAnonymousPosts },
+        stats: { totalUsers, totalPosts, totalEvents, totalItems, pendingVerifications, pendingAnonymousPosts, pendingInstitutions },
         recentActivity: recentAuditLogs,
       })
     );
@@ -140,6 +146,93 @@ export const manageUser = async (req: any, res: Response): Promise<void> => {
     res.status(200).json(formatResponse(true, 'User updated successfully'));
   } catch (error: any) {
     res.status(400).json(formatResponse(false, error.message));
+  }
+};
+
+/**
+ * The review queue for universities students proposed at registration. Each
+ * entry carries the number of accounts already sitting in it, which is the
+ * signal that tells a real submission apart from a typo — a legitimate
+ * university accumulates registrations while it waits.
+ */
+export const getPendingInstitutions = async (req: any, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const { skip } = buildPagination(page, limit);
+
+    const query = { status: InstitutionStatus.PENDING };
+
+    const [institutions, total] = await Promise.all([
+      Institution.find(query)
+        .populate('submittedBy', 'firstName lastName username email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Institution.countDocuments(query),
+    ]);
+
+    const withCounts = await Promise.all(
+      institutions.map(async (institution: any) => ({
+        ...institution,
+        registeredUsers: await User.countDocuments({ institution: institution._id }),
+      }))
+    );
+
+    res.status(200).json(
+      formatResponse(true, 'Pending institutions retrieved', {
+        institutions: withCounts,
+        meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      })
+    );
+  } catch (error: any) {
+    respondServerError(req, res, error);
+  }
+};
+
+/**
+ * Approve or decline a student-submitted university. Approving publishes it to
+ * the registration list; declining hides it. Neither touches the accounts that
+ * already registered into it — deactivating real students because an admin
+ * mistyped a decision is not a recoverable action, so it is left explicit.
+ */
+export const reviewInstitution = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { institutionId } = req.params;
+    const { status, rejectionReason } = req.body;
+
+    const institution = await Institution.findById(institutionId);
+    if (!institution) {
+      res.status(404).json(formatResponse(false, 'Institution not found'));
+      return;
+    }
+
+    if (institution.status !== InstitutionStatus.PENDING) {
+      res.status(400).json(
+        formatResponse(false, `This institution has already been ${institution.status}`)
+      );
+      return;
+    }
+
+    const approved = status === 'approved';
+    institution.status = approved ? InstitutionStatus.APPROVED : InstitutionStatus.REJECTED;
+    institution.isActive = approved;
+    institution.rejectionReason = approved ? undefined : rejectionReason || undefined;
+    institution.reviewedBy = req.user._id;
+    institution.reviewedAt = new Date();
+    await institution.save();
+
+    const registeredUsers = await User.countDocuments({ institution: institution._id });
+
+    res.status(200).json(
+      formatResponse(true, `Institution ${institution.status}`, {
+        institution,
+        registeredUsers,
+      })
+    );
+  } catch (error: any) {
+    respondServerError(req, res, error);
   }
 };
 

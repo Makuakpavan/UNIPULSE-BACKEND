@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getDashboardStats, getPendingVerifications, verifyStudent,
   getAuditLogs, manageUser, createInstitution, updateInstitution,
+  getPendingInstitutions, reviewInstitution,
 } from '../controllers/adminController';
 import { authenticate } from '../middleware/auth';
 import { authorize } from '../middleware/rbac';
@@ -10,6 +11,7 @@ import { validate } from '../middleware/validate';
 import {
   verifyStudentValidator, manageUserValidator, createInstitutionValidator,
   institutionValidator, paginationValidator, objectIdValidator,
+  reviewInstitutionValidator,
 } from '../utils/validators';
 import { UserRole } from '../types';
 
@@ -50,6 +52,31 @@ router.patch(
     getDetails: (req) => ({ isActive: req.body.isActive, role: req.body.role }),
   }),
   manageUser
+);
+
+// Declared before '/institutions/:institutionId' so 'pending' is matched
+// literally rather than being read as an institution id.
+router.get(
+  '/institutions/pending',
+  superAdminOnly,
+  paginationValidator,
+  validate,
+  getPendingInstitutions
+);
+
+router.patch(
+  '/institutions/:institutionId/review',
+  superAdminOnly,
+  objectIdValidator('institutionId'),
+  reviewInstitutionValidator,
+  validate,
+  auditLog({
+    action: 'review_institution',
+    entityType: 'Institution',
+    getEntityId: (req) => req.params.institutionId,
+    getDetails: (req) => ({ status: req.body.status, rejectionReason: req.body.rejectionReason }),
+  }),
+  reviewInstitution
 );
 
 router.post(
